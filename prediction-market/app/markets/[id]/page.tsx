@@ -39,10 +39,9 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
     );
   }
 
-  const handlePlaceBet = async (outcomeIndex: number, amount: string) => {
-    console.log('Placing bet:', { marketId: market.id, outcomeIndex, amount });
-    // TODO: Implement actual bet placement with smart contract
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+  const handleBetSuccess = () => {
+    // Refresh market data after successful bet
+    setMarket(getMarketById(resolvedParams.id));
   };
 
   const totalBets = 156; // Mock data
@@ -267,7 +266,7 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
         <BetPlacementModal
           market={market}
           onClose={() => setShowBetModal(false)}
-          onPlaceBet={handlePlaceBet}
+          onSuccess={handleBetSuccess}
         />
       )}
     </div>

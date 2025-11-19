@@ -2,16 +2,27 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Wallet, Activity, TrendingUp, Menu, X } from 'lucide-react';
+import { Wallet, Activity, TrendingUp, Menu, X, Loader2 } from 'lucide-react';
 import Button from './ui/Button';
+import { useAccount, useConnect, useDisconnect } from 'wagmi';
+import { formatAddress } from '@/utils/format';
 
 export default function Header() {
-  const [isConnected, setIsConnected] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { address, isConnected } = useAccount();
+  const { connect, connectors, isPending } = useConnect();
+  const { disconnect } = useDisconnect();
 
   const handleConnect = () => {
-    // TODO: Implement wallet connection
-    setIsConnected(!isConnected);
+    if (isConnected) {
+      disconnect();
+    } else {
+      // Use the first available connector (injected/MetaMask)
+      const injectedConnector = connectors.find(c => c.id === 'injected');
+      if (injectedConnector) {
+        connect({ connector: injectedConnector });
+      }
+    }
   };
 
   return (
@@ -59,9 +70,25 @@ export default function Header() {
               onClick={handleConnect}
               variant={isConnected ? 'secondary' : 'primary'}
               size="md"
+              isLoading={isPending}
+              disabled={isPending}
             >
-              <Wallet className="w-4 h-4 mr-2" />
-              {isConnected ? '0x1234...5678' : 'Connect Wallet'}
+              {isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Connecting...
+                </>
+              ) : isConnected ? (
+                <>
+                  <Wallet className="w-4 h-4 mr-2" />
+                  {formatAddress(address || '')}
+                </>
+              ) : (
+                <>
+                  <Wallet className="w-4 h-4 mr-2" />
+                  Connect Wallet
+                </>
+              )}
             </Button>
           </div>
 
@@ -109,9 +136,25 @@ export default function Header() {
                 onClick={handleConnect}
                 variant={isConnected ? 'secondary' : 'primary'}
                 className="w-full"
+                isLoading={isPending}
+                disabled={isPending}
               >
-                <Wallet className="w-4 h-4 mr-2" />
-                {isConnected ? '0x1234...5678' : 'Connect Wallet'}
+                {isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Connecting...
+                  </>
+                ) : isConnected ? (
+                  <>
+                    <Wallet className="w-4 h-4 mr-2" />
+                    {formatAddress(address || '')}
+                  </>
+                ) : (
+                  <>
+                    <Wallet className="w-4 h-4 mr-2" />
+                    Connect Wallet
+                  </>
+                )}
               </Button>
             </div>
           </div>
