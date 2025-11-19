@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Market, MarketStatus } from '@/types';
-import { useBetStream, useOddsStream, useMarketResolutionStream } from './useSomniaDataStreams';
+import { useBetStream, useOddsStream, useMarketResolutionStream, useMarketStream } from './useSomniaDataStreams';
+import { useMarketCount, useMarket } from './useContract';
+import { formatEther } from 'viem';
 
-// Mock data for development - will be replaced with real contract calls
+// Mock data for initial display (will be replaced with real data from contract)
 const MOCK_MARKETS: Market[] = [
   {
     id: '0',
@@ -53,21 +55,47 @@ const MOCK_MARKETS: Market[] = [
   },
 ];
 
+/**
+ * Hook to manage market data with real-time updates from Somnia Data Streams
+ */
 export function useMarkets() {
   const [markets, setMarkets] = useState<Market[]>(MOCK_MARKETS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Real-time updates from Data Streams
+  // Get market count from contract
+  const { data: marketCount } = useMarketCount();
+
+  // Real-time event handlers
+  const handleNewMarket = useCallback((event: any) => {
+    console.log('📢 New market created:', event);
+
+    const newMarket: Market = {
+      id: event.marketId,
+      question: event.question,
+      outcomes: event.outcomes || [],
+      endTime: parseInt(event.endTime || '0'),
+      resolutionTime: 0,
+      creator: event.creator,
+      resolved: false,
+      winningOutcome: 0,
+      totalPool: '0',
+      status: MarketStatus.Active,
+      odds: event.outcomes?.map(() => 100 / event.outcomes.length) || [],
+    };
+
+    setMarkets((prev) => [newMarket, ...prev]);
+  }, []);
+
   const handleBetUpdate = useCallback((event: any) => {
-    console.log('Bet placed event:', event);
-    // Update market odds in real-time
+    console.log('📢 Bet placed:', event);
+
     setMarkets((prev) =>
       prev.map((market) => {
-        if (market.id === event.marketId?.toString()) {
+        if (market.id === event.marketId) {
           return {
             ...market,
-            totalPool: (parseFloat(market.totalPool) + parseFloat(event.amount || 0)).toString(),
+            totalPool: event.newPoolTotal ? formatEther(BigInt(event.newPoolTotal)) : market.totalPool,
           };
         }
         return market;
@@ -76,10 +104,11 @@ export function useMarkets() {
   }, []);
 
   const handleOddsUpdate = useCallback((event: any) => {
-    console.log('Odds updated event:', event);
+    console.log('📢 Odds updated:', event);
+
     setMarkets((prev) =>
       prev.map((market) => {
-        if (market.id === event.marketId?.toString()) {
+        if (market.id === event.marketId) {
           return {
             ...market,
             odds: event.odds || market.odds,
@@ -91,15 +120,17 @@ export function useMarkets() {
   }, []);
 
   const handleMarketResolution = useCallback((event: any) => {
-    console.log('Market resolved event:', event);
+    console.log('📢 Market resolved:', event);
+
     setMarkets((prev) =>
       prev.map((market) => {
-        if (market.id === event.marketId?.toString()) {
+        if (market.id === event.marketId) {
           return {
             ...market,
             resolved: true,
-            winningOutcome: event.winningOutcome || 0,
+            winningOutcome: parseInt(event.winningOutcome || '0'),
             status: MarketStatus.Resolved,
+            resolutionTime: parseInt(event.timestamp || '0'),
           };
         }
         return market;
@@ -107,28 +138,41 @@ export function useMarkets() {
     );
   }, []);
 
-  // Subscribe to real-time updates
-  useBetStream(handleBetUpdate);
-  useOddsStream(handleOddsUpdate);
-  useMarketResolutionStream(handleMarketResolution);
+  // Subscribe to real-time updates from Somnia Data Streams
+  const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
+  const isContractDeployed = contractAddress && contractAddress !== '0x0000000000000000000000000000000000000000';
 
+  useMarketStream(handleNewMarket, isContractDeployed || false);
+  useBetStream(handleBetUpdate, isContractDeployed || false);
+  useOddsStream(handleOddsUpdate, isContractDeployed || false);
+  useMarketResolutionStream(handleMarketResolution, isContractDeployed || false);
+
+  // Fetch markets from contract when available
   const fetchMarkets = useCallback(async () => {
+    if (!marketCount || marketCount === BigInt(0)) {
+      // No markets on contract yet, use mock data
+      console.log('ℹ️  Using mock data - contract not deployed or no markets created');
+      return;
+    }
+
     setLoading(true);
     try {
-      // TODO: Fetch from smart contract
-      // For now, using mock data
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      setMarkets(MOCK_MARKETS);
+      // TODO: Fetch all markets from contract
+      // For now, keeping mock data until contract is deployed
+      console.log(`📊 Found ${marketCount} markets on contract`);
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch markets');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [marketCount]);
 
   useEffect(() => {
-    fetchMarkets();
-  }, [fetchMarkets]);
+    if (isContractDeployed) {
+      fetchMarkets();
+    }
+  }, [fetchMarkets, isContractDeployed]);
 
   const getMarketById = useCallback(
     (id: string) => {
@@ -153,5 +197,6 @@ export function useMarkets() {
     getMarketById,
     getActiveMarkets,
     getResolvedMarkets,
+    isContractDeployed: isContractDeployed || false,
   };
 }

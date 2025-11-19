@@ -1,21 +1,32 @@
 import { SDK } from '@somnia-chain/streams';
-import { createPublicClient, createWalletClient, http, type Address } from 'viem';
+import { createPublicClient, createWalletClient, http, type Address, decodeEventLog } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { somniaTestnet, SCHEMAS } from './config';
+import { PREDICTION_MARKET_ABI } from './contract-abi';
 
 let sdkInstance: SDK | null = null;
-let schemaIds: Record<string, string> = {};
+let publicClient: any = null;
+let eventSubscriptions: Map<string, any> = new Map();
 
+// Contract address - will be set after deployment
+const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '0x0000000000000000000000000000000000000000') as `0x${string}`;
+
+/**
+ * Initialize the Somnia Data Streams SDK
+ * This creates both the SDK instance and clients for blockchain interaction
+ */
 export async function initializeSomniaSDK(privateKey?: `0x${string}`) {
-  if (sdkInstance) return sdkInstance;
+  if (sdkInstance && publicClient) return { sdk: sdkInstance, client: publicClient };
 
-  const publicClient = createPublicClient({
+  // Create public client for reading blockchain data
+  publicClient = createPublicClient({
     chain: somniaTestnet,
     transport: http(),
   });
 
   let walletClient = null;
 
+  // Create wallet client if private key provided (for backend/admin operations)
   if (privateKey) {
     const account = privateKeyToAccount(privateKey);
     walletClient = createWalletClient({
@@ -25,105 +36,245 @@ export async function initializeSomniaSDK(privateKey?: `0x${string}`) {
     });
   }
 
+  // Initialize Somnia Data Streams SDK
   sdkInstance = new SDK({
     public: publicClient,
     wallet: walletClient as any,
   });
 
-  // Register schemas
-  await registerSchemas();
+  console.log('✅ Somnia SDK initialized');
 
-  return sdkInstance;
+  return { sdk: sdkInstance, client: publicClient };
 }
 
-export async function registerSchemas() {
-  if (!sdkInstance) throw new Error('SDK not initialized');
-
-  try {
-    // Register event schemas for real-time subscriptions
-    const schemas = Object.values(SCHEMAS);
-
-    for (const schema of schemas) {
-      try {
-        const schemaId = await sdkInstance.streams.computeSchemaId(schema.schema);
-        if (schemaId instanceof Error) {
-          throw schemaId;
-        }
-        schemaIds[schema.id] = schemaId;
-
-        // Check if already registered
-        const isRegistered = await sdkInstance.streams.isDataSchemaRegistered(schemaId);
-
-        if (!isRegistered) {
-          // Schema registration will be handled by the contract
-          console.log(`Schema ${schema.id} needs registration: ${schemaId}`);
-        }
-      } catch (error) {
-        console.warn(`Schema ${schema.id} might already be registered:`, error);
-      }
-    }
-  } catch (error) {
-    console.error('Error registering schemas:', error);
+/**
+ * Subscribe to MarketCreated events from the contract
+ * Uses native blockchain event watching for real-time updates
+ */
+export function subscribeToMarketCreated(callback: (event: any) => void): () => void {
+  if (!publicClient) {
+    console.warn('SDK not initialized, initializing now...');
+    initializeSomniaSDK();
   }
+
+  // Watch for MarketCreated events on the blockchain
+  const unwatch = publicClient.watchContractEvent({
+    address: CONTRACT_ADDRESS,
+    abi: PREDICTION_MARKET_ABI,
+    eventName: 'MarketCreated',
+    onLogs: (logs: any[]) => {
+      logs.forEach((log) => {
+        try {
+          const decoded = decodeEventLog({
+            abi: PREDICTION_MARKET_ABI,
+            data: log.data,
+            topics: log.topics,
+          });
+
+          const args = decoded.args as any;
+          const event = {
+            marketId: args.marketId?.toString(),
+            question: args.question,
+            outcomes: args.outcomes,
+            endTime: args.endTime?.toString(),
+            creator: args.creator,
+            timestamp: args.timestamp?.toString(),
+            transactionHash: log.transactionHash,
+            blockNumber: log.blockNumber?.toString(),
+          };
+
+          console.log('📢 MarketCreated event:', event);
+          callback(event);
+        } catch (error) {
+          console.error('Error decoding MarketCreated event:', error);
+        }
+      });
+    },
+  });
+
+  eventSubscriptions.set('MarketCreated', unwatch);
+
+  // Return cleanup function
+  return () => {
+    unwatch();
+    eventSubscriptions.delete('MarketCreated');
+  };
 }
 
-export function getSchemaId(schemaName: string): string {
-  return schemaIds[schemaName] || '';
+/**
+ * Subscribe to BetPlaced events from the contract
+ * Provides real-time updates when bets are placed
+ */
+export function subscribeToBetPlaced(callback: (event: any) => void): () => void {
+  if (!publicClient) {
+    console.warn('SDK not initialized, initializing now...');
+    initializeSomniaSDK();
+  }
+
+  const unwatch = publicClient.watchContractEvent({
+    address: CONTRACT_ADDRESS,
+    abi: PREDICTION_MARKET_ABI,
+    eventName: 'BetPlaced',
+    onLogs: (logs: any[]) => {
+      logs.forEach((log) => {
+        try {
+          const decoded = decodeEventLog({
+            abi: PREDICTION_MARKET_ABI,
+            data: log.data,
+            topics: log.topics,
+          });
+
+          const args = decoded.args as any;
+          const event = {
+            marketId: args.marketId?.toString(),
+            bettor: args.bettor,
+            outcomeIndex: args.outcomeIndex?.toString(),
+            amount: args.amount?.toString(),
+            newPoolTotal: args.newPoolTotal?.toString(),
+            timestamp: args.timestamp?.toString(),
+            transactionHash: log.transactionHash,
+            blockNumber: log.blockNumber?.toString(),
+          };
+
+          console.log('📢 BetPlaced event:', event);
+          callback(event);
+        } catch (error) {
+          console.error('Error decoding BetPlaced event:', error);
+        }
+      });
+    },
+  });
+
+  eventSubscriptions.set('BetPlaced', unwatch);
+
+  return () => {
+    unwatch();
+    eventSubscriptions.delete('BetPlaced');
+  };
 }
 
-export async function subscribeToMarketCreated(
-  callback: (event: any) => void
-) {
-  // TODO: Implement subscription with proper SubscriptionInitParams
-  // This will be configured once the smart contract is deployed
-  console.log('Subscribe to market created events');
-  return null;
+/**
+ * Subscribe to OddsUpdated events from the contract
+ * Real-time odds changes for live market updates
+ */
+export function subscribeToOddsUpdated(callback: (event: any) => void): () => void {
+  if (!publicClient) {
+    console.warn('SDK not initialized, initializing now...');
+    initializeSomniaSDK();
+  }
+
+  const unwatch = publicClient.watchContractEvent({
+    address: CONTRACT_ADDRESS,
+    abi: PREDICTION_MARKET_ABI,
+    eventName: 'OddsUpdated',
+    onLogs: (logs: any[]) => {
+      logs.forEach((log) => {
+        try {
+          const decoded = decodeEventLog({
+            abi: PREDICTION_MARKET_ABI,
+            data: log.data,
+            topics: log.topics,
+          });
+
+          const args = decoded.args as any;
+          const event = {
+            marketId: args.marketId?.toString(),
+            odds: args.odds?.map((o: bigint) => Number(o)),
+            timestamp: args.timestamp?.toString(),
+            transactionHash: log.transactionHash,
+            blockNumber: log.blockNumber?.toString(),
+          };
+
+          console.log('📢 OddsUpdated event:', event);
+          callback(event);
+        } catch (error) {
+          console.error('Error decoding OddsUpdated event:', error);
+        }
+      });
+    },
+  });
+
+  eventSubscriptions.set('OddsUpdated', unwatch);
+
+  return () => {
+    unwatch();
+    eventSubscriptions.delete('OddsUpdated');
+  };
 }
 
-export async function subscribeToBetPlaced(
-  callback: (event: any) => void
-) {
-  // TODO: Implement subscription with proper SubscriptionInitParams
-  // This will be configured once the smart contract is deployed
-  console.log('Subscribe to bet placed events');
-  return null;
+/**
+ * Subscribe to MarketResolved events from the contract
+ * Notifies when markets are settled with winning outcomes
+ */
+export function subscribeToMarketResolved(callback: (event: any) => void): () => void {
+  if (!publicClient) {
+    console.warn('SDK not initialized, initializing now...');
+    initializeSomniaSDK();
+  }
+
+  const unwatch = publicClient.watchContractEvent({
+    address: CONTRACT_ADDRESS,
+    abi: PREDICTION_MARKET_ABI,
+    eventName: 'MarketResolved',
+    onLogs: (logs: any[]) => {
+      logs.forEach((log) => {
+        try {
+          const decoded = decodeEventLog({
+            abi: PREDICTION_MARKET_ABI,
+            data: log.data,
+            topics: log.topics,
+          });
+
+          const args = decoded.args as any;
+          const event = {
+            marketId: args.marketId?.toString(),
+            winningOutcome: args.winningOutcome?.toString(),
+            totalPool: args.totalPool?.toString(),
+            timestamp: args.timestamp?.toString(),
+            transactionHash: log.transactionHash,
+            blockNumber: log.blockNumber?.toString(),
+          };
+
+          console.log('📢 MarketResolved event:', event);
+          callback(event);
+        } catch (error) {
+          console.error('Error decoding MarketResolved event:', error);
+        }
+      });
+    },
+  });
+
+  eventSubscriptions.set('MarketResolved', unwatch);
+
+  return () => {
+    unwatch();
+    eventSubscriptions.delete('MarketResolved');
+  };
 }
 
-export async function subscribeToOddsUpdated(
-  callback: (event: any) => void
-) {
-  // TODO: Implement subscription with proper SubscriptionInitParams
-  // This will be configured once the smart contract is deployed
-  console.log('Subscribe to odds updated events');
-  return null;
+/**
+ * Cleanup all active subscriptions
+ */
+export function cleanupSubscriptions() {
+  eventSubscriptions.forEach((unwatch, eventName) => {
+    console.log(`Cleaning up ${eventName} subscription`);
+    unwatch();
+  });
+  eventSubscriptions.clear();
 }
 
-export async function subscribeToMarketResolved(
-  callback: (event: any) => void
-) {
-  // TODO: Implement subscription with proper SubscriptionInitParams
-  // This will be configured once the smart contract is deployed
-  console.log('Subscribe to market resolved events');
-  return null;
+/**
+ * Get the current contract address
+ */
+export function getContractAddress(): Address {
+  return CONTRACT_ADDRESS;
 }
 
-export async function publishMarketData(
-  schemaName: string,
-  data: any,
-  id: string
-) {
-  // TODO: Implement with proper DataStream params after contract deployment
-  console.log('Publish market data:', schemaName, id);
-  return null;
+/**
+ * Check if SDK is initialized
+ */
+export function isSDKInitialized(): boolean {
+  return sdkInstance !== null && publicClient !== null;
 }
 
-export async function emitMarketEvent(
-  schemaName: string,
-  eventData: any
-) {
-  // TODO: Implement event emission after contract deployment
-  console.log('Emit market event:', schemaName);
-  return null;
-}
-
-export { sdkInstance };
+export { sdkInstance, publicClient };

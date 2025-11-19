@@ -30,10 +30,15 @@ export function useSomniaDataStreams() {
   return { isInitialized, error };
 }
 
-export function useMarketStream(callback: (event: any) => void) {
+export function useMarketStream(callback: (event: any) => void, enabled = true) {
   const [isSubscribed, setIsSubscribed] = useState(false);
 
   useEffect(() => {
+    if (!enabled) {
+      setIsSubscribed(false);
+      return;
+    }
+
     let subscription: any = null;
 
     const subscribe = async () => {
@@ -52,15 +57,20 @@ export function useMarketStream(callback: (event: any) => void) {
         subscription.unsubscribe();
       }
     };
-  }, [callback]);
+  }, [callback, enabled]);
 
   return { isSubscribed };
 }
 
-export function useBetStream(callback: (event: any) => void) {
+export function useBetStream(callback: (event: any) => void, enabled = true) {
   const [isSubscribed, setIsSubscribed] = useState(false);
 
   useEffect(() => {
+    if (!enabled) {
+      setIsSubscribed(false);
+      return;
+    }
+
     let subscription: any = null;
 
     const subscribe = async () => {
@@ -79,15 +89,20 @@ export function useBetStream(callback: (event: any) => void) {
         subscription.unsubscribe();
       }
     };
-  }, [callback]);
+  }, [callback, enabled]);
 
   return { isSubscribed };
 }
 
-export function useOddsStream(callback: (event: any) => void) {
+export function useOddsStream(callback: (event: any) => void, enabled = true) {
   const [isSubscribed, setIsSubscribed] = useState(false);
 
   useEffect(() => {
+    if (!enabled) {
+      setIsSubscribed(false);
+      return;
+    }
+
     let subscription: any = null;
 
     const subscribe = async () => {
@@ -106,15 +121,20 @@ export function useOddsStream(callback: (event: any) => void) {
         subscription.unsubscribe();
       }
     };
-  }, [callback]);
+  }, [callback, enabled]);
 
   return { isSubscribed };
 }
 
-export function useMarketResolutionStream(callback: (event: any) => void) {
+export function useMarketResolutionStream(callback: (event: any) => void, enabled = true) {
   const [isSubscribed, setIsSubscribed] = useState(false);
 
   useEffect(() => {
+    if (!enabled) {
+      setIsSubscribed(false);
+      return;
+    }
+
     let subscription: any = null;
 
     const subscribe = async () => {
@@ -133,7 +153,7 @@ export function useMarketResolutionStream(callback: (event: any) => void) {
         subscription.unsubscribe();
       }
     };
-  }, [callback]);
+  }, [callback, enabled]);
 
   return { isSubscribed };
 }
